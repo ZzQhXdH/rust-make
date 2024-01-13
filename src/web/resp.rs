@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
-use ntex::web::{Responder, WebResponseError, self};
-use ntex::http::{Response, ResponseError};
+use ntex::http::Response;
+use ntex::web::{Responder, WebResponseError};
 use serde::Serialize;
 
 use crate::error::AppErr;
@@ -33,16 +33,20 @@ impl<T> DerefMut for Cbor<T> {
     }
 }
 
-impl <T: Serialize> Responder for Cbor<T> {
-    
+impl<T: Serialize> Responder for Cbor<T> {
     async fn respond_to(self, _req: &ntex::web::HttpRequest) -> Response {
-   
         let body = serde_cbor::to_vec(&self.0).unwrap();
         Response::Ok()
-        .set_header(HEAD_RESP, HEAD_SUCC)
-        .content_type(CONTENT_TYPE_BIN)
-        .body(body)
+            .set_header(HEAD_RESP, HEAD_SUCC)
+            .content_type(CONTENT_TYPE_BIN)
+            .body(body)
     }
+}
+
+pub type CborRes<T> = Result<Cbor<T>, AppErr>;
+
+pub fn new_cbor<T>(val: T) -> CborRes<T> {
+    Ok(Cbor(val))
 }
 
 #[derive(Debug, Serialize)]
@@ -57,48 +61,15 @@ struct ErrResp2<'a> {
     err_msg: &'a str,
 }
 
-// impl ResponseError for AppErr {
-
-//     fn error_response(&self) -> Response {
-//         let body = match self {
-//             Self::Custom(code, msg) => {
-//                 let resp = ErrResp2 {
-//                     err_code: *code,
-//                     err_msg: msg
-//                 };
-//                 serde_cbor::to_vec(&resp).unwrap()
-//             },
-
-//             _ => {
-//                 let resp = ErrResp {
-//                     err_code: -1,
-//                     err_msg: self.to_string()
-//                 };
-//                 serde_cbor::to_vec(&resp).unwrap()
-//             }
-//         };
-//         Response::Ok()
-//             .set_header(HEAD_RESP, HEAD_ERR)
-//             .content_type(CONTENT_TYPE_BIN)
-//             .body(body)
-//     }
-// }
-
-impl web::error::WebResponseError for AppErr {
+impl WebResponseError for AppErr {
     fn error_response(&self, _: &ntex::web::HttpRequest) -> Response {
         let body = match self {
-            Self::Custom(code, msg) => {
-                let resp = ErrResp2 {
-                    err_code: *code,
-                    err_msg: msg
-                };
-                serde_cbor::to_vec(&resp).unwrap()
-            },
+            Self::Custom(info) => serde_cbor::to_vec(info).unwrap(),
 
             _ => {
                 let resp = ErrResp {
                     err_code: -1,
-                    err_msg: self.to_string()
+                    err_msg: self.to_string(),
                 };
                 serde_cbor::to_vec(&resp).unwrap()
             }
@@ -109,5 +80,3 @@ impl web::error::WebResponseError for AppErr {
             .body(body)
     }
 }
-
-

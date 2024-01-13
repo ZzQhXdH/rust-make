@@ -1,33 +1,27 @@
-use std::mem::MaybeUninit;
+use crate::{config::SQLITE_PATH, error::SqlxErr};
 use sqlx::SqlitePool;
-use crate::{error::SqlxErr, config::SQLITE_PATH};
+use std::mem::MaybeUninit;
 
 static mut POOL: MaybeUninit<SqlitePool> = MaybeUninit::uninit();
 
-mod device;
-mod coin;
-mod bill;
+pub mod bill;
+pub mod coin;
+pub mod device;
 
 pub async fn sql_init() -> Result<(), SqlxErr> {
-
     let pool = SqlitePool::connect(SQLITE_PATH).await?;
 
     unsafe {
         POOL.write(pool);
     }
 
-    device::init().await?;
-    coin::init().await?;
-    bill::init().await?;
+    device::init().await;
+    coin::init().await;
+    bill::init().await;
 
     Ok(())
 }
 
 pub fn get_pool() -> &'static SqlitePool {
-    unsafe {
-        POOL.assume_init_ref()
-    }
+    unsafe { POOL.assume_init_ref() }
 }
-
-
-
