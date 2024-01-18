@@ -44,7 +44,7 @@ async fn create(
 ) -> Result<i64, SqlxErr> {
     let ret = sqlx::query(
         r#"
-        INSERT INTB tb_device 
+        INSERT INTO tb_device 
         (name, mac_addr, create_timestamp, mcu_version, app_version, address) 
         VALUES(?, ?, ?, ?, ?, ?)
     "#,

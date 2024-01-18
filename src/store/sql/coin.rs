@@ -154,14 +154,15 @@ pub async fn set_type_mask(device_id: i64, type_mask: u32) -> Result<(), SqlxErr
     Ok(())
 }
 
-pub async fn update(device_id: i64, model: &str, version: &str) -> Result<(), SqlxErr> {
+pub async fn update(device_id: i64, model: &str, version: &str, serial_number: &str) -> Result<(), SqlxErr> {
     sqlx::query(
         r#"
-        UPDATE tb_coin SET model = ?, version = ? WHERE device_id = ?
+        UPDATE tb_coin SET model = ?, version = ?, serial_number = ? WHERE device_id = ?
     "#,
     )
     .bind(model)
     .bind(version)
+    .bind(serial_number)
     .bind(device_id)
     .execute(get_pool())
     .await?;

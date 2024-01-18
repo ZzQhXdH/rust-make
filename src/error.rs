@@ -38,6 +38,36 @@ pub enum AppErr {
     Proto(&'static str),
 }
 
+impl AppErr {
+
+    pub fn into_info(self) -> ErrInfo {
+        match self {
+            Self::Custom(info) => info,
+            _ => ErrInfo { err_code: -1, err_msg: self.to_string() }
+        }
+    }
+
+    pub fn serial_to_vec(&self) -> Vec<u8> {
+        match self {
+            Self::Custom(info) => serde_cbor::to_vec(info).unwrap(),
+            _ => {
+                let info = ErrInfo {
+                    err_code: -1,
+                    err_msg: self.to_string(),
+                };
+                serde_cbor::to_vec(&info).unwrap()
+            }
+        }
+    }
+}
+
+pub fn serial_to_vec<T: Serialize>(ret: Result<T, AppErr>) -> Vec<u8> {
+    match ret {
+        Ok(v) => serde_cbor::to_vec(&v).unwrap(),
+        Err(e) => e.serial_to_vec(),
+    }
+}
+
 pub fn proto_err<T>(msg: &'static str) -> Result<T, AppErr> {
     Err(AppErr::Proto(msg))
 }

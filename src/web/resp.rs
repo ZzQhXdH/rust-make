@@ -5,6 +5,8 @@ use ntex::web::{Responder, WebResponseError};
 use serde::Serialize;
 
 use crate::error::AppErr;
+use crate::serve::Body;
+
 
 const HEAD_RESP: &'static str = "resp";
 const HEAD_ERR: &'static str = "err";
@@ -13,6 +15,7 @@ const HEAD_SUCC: &'static str = "succ";
 const CONTENT_TYPE_BIN: &'static str = "application/octet-stream";
 
 pub struct Cbor<T>(pub T);
+pub struct CborBody(pub Vec<u8>);
 
 impl<T> AsRef<T> for Cbor<T> {
     fn as_ref(&self) -> &T {
@@ -43,6 +46,16 @@ impl<T: Serialize> Responder for Cbor<T> {
     }
 }
 
+impl Responder for CborBody {
+
+    async fn respond_to(self, _req: &ntex::web::HttpRequest) -> Response {
+        Response::Ok()
+            .set_header(HEAD_RESP, HEAD_SUCC)
+            .content_type(CONTENT_TYPE_BIN)
+            .body(self.0)
+    }
+}
+
 pub type CborRes<T> = Result<Cbor<T>, AppErr>;
 
 pub fn new_cbor<T>(val: T) -> CborRes<T> {
@@ -63,17 +76,7 @@ struct ErrResp2<'a> {
 
 impl WebResponseError for AppErr {
     fn error_response(&self, _: &ntex::web::HttpRequest) -> Response {
-        let body = match self {
-            Self::Custom(info) => serde_cbor::to_vec(info).unwrap(),
-
-            _ => {
-                let resp = ErrResp {
-                    err_code: -1,
-                    err_msg: self.to_string(),
-                };
-                serde_cbor::to_vec(&resp).unwrap()
-            }
-        };
+        let body = self.serial_to_vec();
         Response::Ok()
             .set_header(HEAD_RESP, HEAD_ERR)
             .content_type(CONTENT_TYPE_BIN)

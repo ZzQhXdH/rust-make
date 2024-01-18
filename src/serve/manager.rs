@@ -1,4 +1,6 @@
-use super::conn::SharedConn;
+use crate::serve::frame::ToFrameBody;
+
+use super::{conn::SharedConn, api::ConnInfo};
 use dashmap::DashSet;
 use std::mem::MaybeUninit;
 
@@ -29,4 +31,16 @@ pub fn conn_append(conn: SharedConn) {
 pub fn conn_remove(conn: &SharedConn) {
     let m = get_manager();
     m.hub.remove(conn);
+}
+
+pub fn conn_infos() -> Vec<u8> {
+    let manager = unsafe {
+        MANAGER.assume_init_ref()  
+    };
+    let mut vec: Vec<SharedConn> = Vec::with_capacity(manager.hub.len());
+    for conn in manager.hub.iter() {
+        vec.push(conn.clone());
+    }
+    let is: Vec<&ConnInfo> = vec.iter().map(|c| &c.info).collect();
+    is.to_vec()
 }

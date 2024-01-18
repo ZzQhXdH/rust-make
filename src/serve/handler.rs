@@ -1,36 +1,29 @@
 use super::{
-    api::handle_resp,
     conn::SharedConn,
-    proto::{make_pong, ReadFrame},
+    frame::{recv::RecvFrame, send::SendFrame, BaseFrame}, api::handle_req,
 };
-use crate::error::ErrorExt;
 
-pub async fn handle_frame(conn: &SharedConn, frame: ReadFrame) {
+
+pub async fn handle_frame(conn: &SharedConn, frame: RecvFrame) {
+    
     match frame {
-        ReadFrame::Ping => {
-            conn.write(make_pong()).print_if_err();
-        }
+        RecvFrame::Ping(r) => {
+            _ = conn.write(SendFrame::Pong(BaseFrame { seq: r.seq }));
+            conn.info.ping();
+        },
 
-        ReadFrame::Pong => {
-            let mut tx = conn.pong_tx.lock().await;
-            let tx = tx.take();
-            if let Some(tx) = tx {
-                _ = tx.send(());
-            }
-        }
+        RecvFrame::Req(r) => {
+            _ = conn.write(SendFrame::Ack(BaseFrame { seq: r.seq }));
+            tokio::spawn(handle_req(conn.clone(), r));
+        },
 
-        ReadFrame::Resp(body) => {
-            let mut tx = conn.res_tx.lock().await;
-            let tx = tx.take();
-            if let Some(tx) = tx {
-                _ = tx.send(body);
-            }
-        }
-
-        ReadFrame::Req(body) => {
-            tokio::spawn(handle_resp(conn.clone(), body));
-        }
+        RecvFrame::NotifyAck(r) => {
+            _ = conn.write(SendFrame::Ack(BaseFrame { seq: r.seq }));
+        },
 
         _ => {}
     };
 }
+
+
+

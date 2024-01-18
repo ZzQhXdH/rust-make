@@ -46,14 +46,15 @@ pub async fn create(conn: &mut SqliteConnection, device_id: i64) -> Result<(), S
     Ok(())
 }
 
-pub async fn update(device_id: i64, model: &str, version: &str) -> Result<(), SqlxErr> {
+pub async fn update(device_id: i64, model: &str, version: &str, serial_number: &str) -> Result<(), SqlxErr> {
     sqlx::query(
         r#"
-        UPDATE tb_bill SET model = ?, version = ? WHERE device_id = ?
+        UPDATE tb_bill SET model = ?, version = ?, serial_number = ? WHERE device_id = ?
     "#,
     )
     .bind(model)
     .bind(version)
+    .bind(serial_number)
     .bind(device_id)
     .execute(get_pool())
     .await?;
@@ -96,6 +97,15 @@ pub async fn get(device_id: i64) -> Result<TableBill, SqlxErr> {
     Ok(coin)
 }
 
+
+
+
 pub async fn init() {
     get_pool().execute(COIN_CREATE_SQL).await.unwrap();
 }
+
+
+
+
+
+

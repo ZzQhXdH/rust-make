@@ -1,49 +1,47 @@
 use crate::{
-    error::{errors, proto_err, AppErr, ErrInfo, ErrorExt, IoErr},
-    serve::proto::make_req,
-    utils::{get_mut, rand_u8, Array},
+    error::{proto_err, AppErr, ErrorExt, IoErr},
+    utils::get_mut,
 };
+use dashmap::DashMap;
 use serde::{de::DeserializeOwned, Serialize};
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, time::Duration};
 use tokio::{
-    io::AsyncWriteExt,
     net::TcpStream,
-    sync::{mpsc, oneshot, Mutex, Semaphore},
-    time::timeout,
+    sync::{mpsc, oneshot, Semaphore},
+    time,
 };
 
 use super::{
     handler::handle_frame,
-    io,
-    manager::conn_remove,
-    proto::{make_ping, ReadFrame},
+    manager::conn_remove, frame::{send::{SendFrame, ResponseFrame, RequestFrame}, recv::{RecvFrame}, write, read, BaseFrame, frame_type, make_type_seq}, api::{ConnInfo, wait_login},
 };
+
 
 pub struct DeviceConn {
     stream: TcpStream,
-    pub addr: SocketAddr,
+    pub info: ConnInfo,
+
+    seq: AtomicU8,
 
     exit_sem: Semaphore,
-    write_tx: mpsc::Sender<Array<u8>>,
-
-    master_lock: Mutex<()>,
-    pub pong_tx: Mutex<Option<oneshot::Sender<()>>>,
-    pub res_tx: Mutex<Option<oneshot::Sender<Array<u8>>>>,
+    write_tx: mpsc::Sender<SendFrame>,
+    
+    // type << 8 + seq
+    res_mq: DashMap<u16, oneshot::Sender<RecvFrame>>,
 }
 
 pub type SharedConn = Arc<DeviceConn>;
 
 impl DeviceConn {
-    pub fn new(stream: TcpStream, addr: SocketAddr) -> SharedConn {
+    pub fn new(stream: TcpStream, info: ConnInfo) -> SharedConn {
         let (tx, rx) = mpsc::channel(32);
         let conn = DeviceConn {
-            addr,
+            info,
             stream,
+            seq: AtomicU8::new(0),
             exit_sem: Semaphore::new(0),
             write_tx: tx,
-            pong_tx: Mutex::new(None),
-            res_tx: Mutex::new(None),
-            master_lock: Mutex::new(()),
+            res_mq: DashMap::new(),
         };
         let conn = Arc::new(conn);
         tokio::spawn(read_loop(conn.clone()));
@@ -51,78 +49,108 @@ impl DeviceConn {
         conn
     }
 
-    pub async fn ping(&self) -> Result<(), AppErr> {
-        let _ = self.master_lock.lock().await;
+    pub fn exit(&self) {
+        self.exit_sem.add_permits(2);
+    }
 
-        let (tx, rx) = oneshot::channel::<()>();
-        {
-            let mut pong_tx = self.pong_tx.lock().await;
-            *pong_tx = Some(tx);
+    pub async fn exec_simple_req<T: Serialize, R: DeserializeOwned>(
+        &self,
+        cmd: u8,
+        value: &T
+    ) -> Result<R, AppErr> {
+
+        let seq = self.get_seq();
+        let rx = self.create_resp(make_type_seq(frame_type::SIMPLE_RES, seq));
+        self.write(SendFrame::SimpleReq(RequestFrame::new(seq, cmd, value)))?;
+        let frame = time::timeout(Duration::from_secs(1), rx).await.wrap()?.wrap()?;
+        if !frame.is_simple_res() {
+            return proto_err("invalid simple res");
         }
-        self.write(make_ping())?;
-        timeout(Duration::from_secs(1), rx).await.wrap()?.wrap()?;
-        Ok(())
+        let v = frame.parse()?;
+        Ok(v)
     }
 
     pub async fn exec_req<T: Serialize, R: DeserializeOwned>(
         &self,
         cmd: u8,
         value: &T,
+        timeout: Duration
     ) -> Result<R, AppErr> {
-        let seq = rand_u8();
-        let buf = self.req(make_req(seq, cmd, value)).await?;
-        let len = buf.len();
-        if len < 3 {
-            return proto_err("res len invalid");
+        let seq = self.get_seq();
+        let ack_rx = self.create_resp(make_type_seq(frame_type::ACK, seq));
+        let res_rx = self.create_resp(make_type_seq(frame_type::RES, seq));
+        self.write( SendFrame::Req(RequestFrame::new(seq, cmd, value)) )?;
+
+        let ack = time::timeout(Duration::from_secs(1), ack_rx).await.wrap()?.wrap()?;
+        if !ack.is_ack() {
+            return proto_err("invalid ack");
         }
-        let r_seq = buf[0];
-        let r_cmd = buf[1];
-        let ec = buf[2];
-        if (r_seq != seq) || (r_cmd != cmd) {
-            return proto_err("res seq or cmd invalid");
+
+        let frame = time::timeout(timeout, res_rx).await.wrap()?.wrap()?;
+        if !frame.is_res() {
+            return proto_err("invalid res");
         }
-        if ec != 0 {
-            let err_info: ErrInfo = serde_cbor::from_slice(&buf[3..])?;
-            return Err(AppErr::Custom(err_info));
-        }
-        let resp = serde_cbor::from_slice(&buf[3..])?;
-        Ok(resp)
+        let r = frame.parse()?;
+        Ok(r)
     }
 
-    async fn req(&self, frame: Array<u8>) -> Result<Array<u8>, AppErr> {
-        let _ = self.master_lock.lock().await;
-
-        let (tx, rx) = oneshot::channel::<Array<u8>>();
-        {
-            let mut res_tx = self.res_tx.lock().await;
-            *res_tx = Some(tx);
+    pub async fn exec_ping(&self) -> Result<(), AppErr> {
+        let seq = self.get_seq();
+        let rx = self.create_resp(make_type_seq(frame_type::PONG, seq));
+        self.write(SendFrame::Ping(BaseFrame{ seq }))?;
+        let frame = time::timeout(Duration::from_secs(1), rx).await.wrap()?.wrap()?;
+        if !frame.is_pong() {
+            return proto_err("invalid pong");
         }
-        self.write(frame)?;
-        let body = timeout(Duration::from_secs(1), rx).await.wrap()?.wrap()?;
-        Ok(body)
-    }
-
-    pub fn write(&self, buf: Array<u8>) -> Result<(), AppErr> {
-        self.write_tx.try_send(buf).wrap()?;
         Ok(())
     }
 
-    pub fn exit(&self) {
-        self.exit_sem.add_permits(2);
+    pub fn write(&self, frame: SendFrame) -> Result<(), AppErr> {
+        self.write_tx.try_send(frame).wrap()?;
+        Ok(())
     }
 
-    async fn read_frame(&self) -> Result<ReadFrame, AppErr> {
+    pub fn ack(&self, seq: u8) -> Result<(), AppErr> {
+        let frame = SendFrame::Ack(BaseFrame { seq });
+        self.write(frame)
+    }
+
+    pub fn res<T: Serialize>(&self, seq: u8, cmd: u8, value: Result<T, AppErr>) -> Result<(), AppErr> {
+        let frame = ResponseFrame::new(seq, cmd, value);
+        self.write(SendFrame::Res(frame))
+    }
+
+    pub fn simple_res<T: Serialize>(&self, seq: u8, cmd: u8, value: Result<T, AppErr>) -> Result<(), AppErr> {
+        let frame = ResponseFrame::new(seq, cmd, value);
+        self.write(SendFrame::SimpleRes(frame))
+    }
+
+    fn get_seq(&self) -> u8 {
+        self.seq.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn create_resp(&self, type_seq: u16) -> oneshot::Receiver<RecvFrame> {
+        let (tx, rx) = oneshot::channel();
+        self.res_mq.insert(type_seq, tx);
+        rx
+    }
+
+    fn recv_resp(&self, type_seq: u16, frame: RecvFrame) {
+        let tx = self.res_mq.remove(&type_seq);
+        if let Some(tx) = tx {
+            _ = tx.1.send(frame);
+        }
+    }
+
+    async fn read_frame(&self) -> Result<RecvFrame, AppErr> {
         let stream = get_mut(&self.stream);
-        let frame = timeout(Duration::from_secs(10), io::read_frame(stream))
-            .await
-            .wrap()?
-            .wrap()?;
+        let frame = read(stream).await?;
         Ok(frame)
     }
 
-    async fn write_frame(&self, buf: &[u8]) -> Result<(), IoErr> {
+    async fn write_frame(&self, frame: &SendFrame) -> Result<(), IoErr> {
         let stream = get_mut(&self.stream);
-        stream.write_all(buf).await
+        write(stream, frame).await
     }
 }
 
@@ -145,31 +173,45 @@ async fn read_loop(conn: SharedConn) {
             }
         };
 
-        handle_frame(&conn, frame).await;
+        match &frame {
+            RecvFrame::Ack(f) => {
+                conn.recv_resp(make_type_seq(frame_type::ACK, f.seq), frame);
+            },
+            RecvFrame::Pong(f) => {
+                conn.recv_resp(make_type_seq(frame_type::PONG, f.seq), frame);
+            },
+            RecvFrame::Res(f) => {
+                conn.recv_resp(make_type_seq(frame_type::RES, f.seq), frame);
+            },
+            RecvFrame::SimpleRes(f) => {
+                conn.recv_resp(make_type_seq(frame_type::SIMPLE_RES, f.seq), frame);
+            },
+            _ => handle_frame(&conn, frame).await,
+        };
+        
     }
     conn.exit();
-    conn_remove(&conn);
 }
 
-async fn write_loop(conn: SharedConn, mut rx: mpsc::Receiver<Array<u8>>) {
+async fn write_loop(conn: SharedConn, mut rx: mpsc::Receiver<SendFrame>) {
     loop {
-        let buf = tokio::select! {
-            buf = rx.recv() => {
-                buf
+        let frame = tokio::select! {
+            frame = rx.recv() => {
+                frame
             }
             _ = conn.exit_sem.acquire() => {
                 println!("write exit");
                 break;
             }
         };
-        let buf = match buf {
+        let frame = match frame {
             None => {
                 println!("write exit2");
                 break;
             }
             Some(v) => v,
         };
-        let ret = conn.write_frame(&buf).await;
+        let ret = conn.write_frame(&frame).await;
         if let Err(e) = ret {
             println!("write err:{}", e);
             break;
