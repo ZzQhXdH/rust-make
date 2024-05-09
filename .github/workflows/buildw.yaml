@@ -20,7 +20,7 @@ jobs:
     - name: upload 
       uses: actions/upload-artifact@v2
       with:
-        name: window-result
-        path: target
+        name: window-result2
+        path: target/release/*
       
     
