@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{ptr::NonNull, time::SystemTime};
 
 use rand::Rng;
 
@@ -23,9 +23,7 @@ pub fn current_timestamp() -> i64 {
 
 pub fn get_mut<T>(value: &T) -> &mut T {
     unsafe {
-        let p = value as *const T;
-        let mp = p as *mut T;
-        &mut *mp
+        NonNull::new_unchecked(value as *const T as *mut T).as_mut()
     }
 }
 
