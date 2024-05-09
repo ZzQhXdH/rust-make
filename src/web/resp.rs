@@ -5,7 +5,7 @@ use ntex::web::{Responder, WebResponseError};
 use serde::Serialize;
 
 use crate::error::AppErr;
-use crate::serve::Body;
+
 
 
 const HEAD_RESP: &'static str = "resp";

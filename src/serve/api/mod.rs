@@ -99,7 +99,7 @@ async fn login(req: &LoginReq) -> Result<i64, AppErr> {
     Ok(id)
 }
 
-async fn dispatch(frame: RequestFrame) -> Result<Body, AppErr> {
+async fn dispatch(_frame: RequestFrame) -> Result<Body, AppErr> {
 
     todo!()
 }

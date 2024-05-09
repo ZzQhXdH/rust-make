@@ -1,5 +1,5 @@
 use crate::{
-    error::{proto_err, AppErr, ErrorExt, IoErr},
+    error::{AppErr, ErrorExt, IoErr},
     utils::get_mut,
 };
 use dashmap::DashMap;
@@ -13,7 +13,7 @@ use tokio::{
 
 use super::{
     handler::handle_frame,
-    manager::conn_remove, frame::{send::{SendFrame, ResponseFrame, RequestFrame}, recv::{RecvFrame}, write, read, BaseFrame, frame_type, make_type_seq}, api::{ConnInfo, wait_login},
+    manager::conn_remove, frame::{send::{SendFrame, ResponseFrame, RequestFrame}, recv::{RecvFrame}, write, read, BaseFrame, frame_type, make_type_seq}, api::{ConnInfo},
 };
 
 
@@ -63,9 +63,7 @@ impl DeviceConn {
         let rx = self.create_resp(make_type_seq(frame_type::SIMPLE_RES, seq));
         self.write(SendFrame::SimpleReq(RequestFrame::new(seq, cmd, value)))?;
         let frame = time::timeout(Duration::from_secs(1), rx).await.wrap()?.wrap()?;
-        if !frame.is_simple_res() {
-            return proto_err("invalid simple res");
-        }
+        let frame = frame.simple_res()?;
         let v = frame.parse()?;
         Ok(v)
     }
@@ -82,14 +80,10 @@ impl DeviceConn {
         self.write( SendFrame::Req(RequestFrame::new(seq, cmd, value)) )?;
 
         let ack = time::timeout(Duration::from_secs(1), ack_rx).await.wrap()?.wrap()?;
-        if !ack.is_ack() {
-            return proto_err("invalid ack");
-        }
+        ack.ack()?;
 
         let frame = time::timeout(timeout, res_rx).await.wrap()?.wrap()?;
-        if !frame.is_res() {
-            return proto_err("invalid res");
-        }
+        let frame = frame.res()?;
         let r = frame.parse()?;
         Ok(r)
     }
@@ -99,9 +93,7 @@ impl DeviceConn {
         let rx = self.create_resp(make_type_seq(frame_type::PONG, seq));
         self.write(SendFrame::Ping(BaseFrame{ seq }))?;
         let frame = time::timeout(Duration::from_secs(1), rx).await.wrap()?.wrap()?;
-        if !frame.is_pong() {
-            return proto_err("invalid pong");
-        }
+        frame.pong()?;
         Ok(())
     }
 

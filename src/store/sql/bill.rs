@@ -43,6 +43,7 @@ pub async fn create(conn: &mut SqliteConnection, device_id: i64) -> Result<(), S
     .execute(conn)
     .await?;
 
+
     Ok(())
 }
 

@@ -18,35 +18,27 @@ pub enum RecvFrame {
 
 impl RecvFrame {
 
-    pub fn is_ack(&self) -> bool {
-        if let RecvFrame::Ack(_) = self {
-            true
+    pub fn ack(self) -> Result<BaseFrame, AppErr> {
+        if let RecvFrame::Ack(f) = self {
+            Ok(f)
         } else {
-            false
+            proto_err("invalid ack")
         }
     }
 
-    pub fn is_pong(&self) -> bool {
-        if let RecvFrame::Ping(_) = self {
-            true
+    pub fn ping(self) -> Result<BaseFrame, AppErr> {
+        if let RecvFrame::Ping(f) = self {
+            Ok(f)
         } else {
-            false
+            proto_err("invalid ping")
         }
     }
 
-    pub fn is_res(&self) -> bool {
-        if let RecvFrame::Res(_) = self {
-            true
+    pub fn pong(self) -> Result<BaseFrame, AppErr> {
+        if let RecvFrame::Pong(f) = self {
+            Ok(f)
         } else {
-            false
-        }
-    }
-
-    pub fn is_simple_res(&self) -> bool {
-        if let RecvFrame::SimpleRes(_) = self {
-            true
-        } else {
-            false
+            proto_err("invalid pong")
         }
     }
 
@@ -54,7 +46,31 @@ impl RecvFrame {
         if let RecvFrame::Req(f) = self {
             Ok(f)
         } else {
+            proto_err("invalid req")
+        }
+    }
+
+    pub fn res(self) -> Result<ResponseFrame, AppErr> {
+        if let RecvFrame::Res(f) = self {
+            Ok(f)
+        } else {
             proto_err("invalid res")
+        }
+    }
+
+    pub fn simple_req(self) -> Result<RequestFrame, AppErr> {
+        if let RecvFrame::SimpleReq(f) = self {
+            Ok(f)
+        } else {
+            proto_err("invalid simple req")
+        }
+    }
+
+    pub fn simple_res(self) -> Result<ResponseFrame, AppErr> {
+        if let RecvFrame::SimpleRes(f) = self {
+            Ok(f)
+        } else {
+            proto_err("invalid simple res")
         }
     }
 
