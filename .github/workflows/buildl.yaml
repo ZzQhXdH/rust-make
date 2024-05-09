@@ -1,4 +1,4 @@
-name: "build-windows"
+name: "build-linux"
 
 on: workflow_dispatch
 
@@ -7,7 +7,7 @@ jobs:
     permissions:
       contents: write
 
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
 
@@ -20,7 +20,7 @@ jobs:
     - name: upload 
       uses: actions/upload-artifact@v2
       with:
-        name: window-result
+        name: linux-result
         path: target
       
     
